@@ -1,13 +1,15 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import type { ColorType, Color, RGBColor, HSLColor, CMYKColor, OKLCHColor, ParsedColor, Token } from '@/lib/types'
+import type { ColorType, Color, ColorObject, RGBColor, ParsedColor, Token } from '@/lib/types'
+import { formatColor } from '@/lib/format-color'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import {
     Card,
     CardContent,
 } from '@/components/ui/card'
 import { ColorPicker } from '@/components/ui/color-picker'
-import { Button } from './ui/button'
 import { ChevronDown } from 'lucide-react'
 
 interface ColorPanelProps {
@@ -17,12 +19,17 @@ interface ColorPanelProps {
     parsedColor?: ParsedColor
     tokens?: Token[]
     convertedColors?: Record<ColorType, Color>
+    previewColor?: ColorObject
     showMore: boolean
+    roundColors: boolean
+    onRoundingToggle: () => void
     onShowMoreToggle: (id: string) => void
     onInputChange: (id: string, value: string) => void
+    onInputCommit?: () => void
     onRevert?: (id: string) => void
 }
 
+/** Displays an editable color band and its parsed color formats. */
 export function ColorPanel({
     id,
     rawInput,
@@ -30,12 +37,17 @@ export function ColorPanel({
     parsedColor,
     tokens = [],
     convertedColors,
+    previewColor,
     showMore,
+    roundColors,
+    onRoundingToggle,
     onShowMoreToggle,
     onInputChange,
+    onInputCommit,
     onRevert,
 }: ColorPanelProps) {
     const [copySuccess, setCopySuccess] = useState('')
+    useEffect(() => setCopySuccess(''), [rawInput, roundColors])
     const [showColorPicker, setShowColorPicker] = useState(false)
     const colorPickerRef = useRef<HTMLDivElement>(null)
 
@@ -57,7 +69,6 @@ export function ColorPanel({
     }, [showColorPicker])
 
     const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        console.log('handleInputChange', event.target.value)
         onInputChange(id, event.target.value)
     }
 
@@ -71,89 +82,21 @@ export function ColorPanel({
         }
     }
 
-    // Create color methods interface for the new system
-    interface ColorMethods {
-        toRgbString: () => string
-        toRgbaString: () => string
-        toHex: () => string
-        toHsl: () => HSLColor
-        toRgb: () => RGBColor
-        toCmyk: () => CMYKColor
-        toOklch: () => OKLCHColor
-        isLight: () => boolean
-    }
-
-    // Default to a dark blue color when no color data is available
-    const alpha = parsedColor?.alpha || 1
+    const color = parsedColor && convertedColors ? { parsedColor, convertedColors } : undefined
+    const invalid = rawInput.trim().length > 0 && !color
+    // Keep the background steady while typing, but never offer stale values to copy.
+    const preview = color ?? previewColor
+    const alpha = preview?.parsedColor.alpha ?? 1
     const isTransparent = alpha < 1
-    const rgb = convertedColors?.rgb as RGBColor || { r: 1, g: 15, b: 29 } // #010f1d
-    const hsl = convertedColors?.hsl as HSLColor || { h: 208, s: 93, l: 6 }
-    const cmyk = convertedColors?.cmyk as CMYKColor || { c: 97, m: 48, y: 0, k: 89 }
-    const oklch = convertedColors?.oklch as OKLCHColor || { l: 0.06, c: 0.05, h: 208 }
-    const hex = convertedColors?.hex as string || '#010f1d'
-    
-    // Create a color object with proper methods
-    const color: ColorMethods = {
-        toRgbString: () => `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-        toRgbaString: () => `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`,
-        toHex: () => hex,
-        toHsl: () => hsl,
-        toRgb: () => rgb,
-        toCmyk: () => cmyk,
-        toOklch: () => oklch,
-        isLight: () => {
-            // Calculate perceived brightness using standard formula
-            const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000
-            return brightness > 128
-        }
-    }
-    
-    const textColorClass = color.isLight() ? 'text-black' : 'text-white'
-
-    // Panel styling
+    const rgb = preview?.convertedColors.rgb as RGBColor | undefined ?? { r: 1, g: 15, b: 29 }
+    const hex = preview?.convertedColors.hex as string | undefined ?? '#010f1d'
+    // Match the browser's byte serialization so fractional channels hydrate consistently.
+    const rgbBackground = `rgba(${Math.round(rgb.r)}, ${Math.round(rgb.g)}, ${Math.round(rgb.b)}, ${alpha})`
+    const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000
+    const textColorClass = brightness > 128 ? 'text-black' : 'text-white'
     const panelStyle: React.CSSProperties = !isTransparent
-        ? { backgroundColor: color.toRgbString() }
-        : {
-              backgroundImage: `url('/transparent-bg.svg')`,
-              backgroundSize: '20px 20px',
-              backgroundRepeat: 'repeat',
-          }
-
-    const formatHslString = (c: ColorMethods | null): string => {
-        if (!c) return '-'
-        const hsl = c.toHsl()
-        if (isTransparent) {
-            return `hsla(${hsl.h.toFixed(0)}, ${hsl.s.toFixed(0)}%, ${hsl.l.toFixed(0)}%, ${alpha})`
-        }
-        return `hsl(${hsl.h.toFixed(0)}, ${hsl.s.toFixed(0)}%, ${hsl.l.toFixed(
-            0
-        )}%)`
-    }
-    const formatRgbString = (c: ColorMethods | null): string => {
-        if (!c) return '-'
-        const rgb = c.toRgb()
-        if (isTransparent) {
-            return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`
-        }
-        return `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`
-    }
-    const formatHexString = (c: ColorMethods | null): string =>
-        c ? c.toHex() : '-'
-    
-    const formatCmykString = (c: ColorMethods | null): string => {
-        if (!c) return '-'
-        const cmyk = c.toCmyk()
-        return `cmyk(${cmyk.c.toFixed(0)}%, ${cmyk.m.toFixed(0)}%, ${cmyk.y.toFixed(0)}%, ${cmyk.k.toFixed(0)}%)`
-    }
-
-    const formatOklchString = (c: ColorMethods | null): string => {
-        if (!c) return '-'
-        const oklch = c.toOklch()
-        if (isTransparent) {
-            return `oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(1)} / ${alpha})`
-        }
-        return `oklch(${oklch.l.toFixed(3)} ${oklch.c.toFixed(3)} ${oklch.h.toFixed(1)})`
-    }
+        ? { backgroundColor: rgbBackground }
+        : { backgroundImage: `url('/transparent-bg.svg')`, backgroundSize: '20px 20px', backgroundRepeat: 'repeat' }
 
     const handleCopy = async (text: string, format: string) => {
         if (!text || text === '-') return
@@ -168,11 +111,12 @@ export function ColorPanel({
         }
     }
 
-    const hslString = formatHslString(color)
-    const rgbString = formatRgbString(color)
-    const hexString = formatHexString(color)
-    const cmykString = formatCmykString(color)
-    const oklchString = formatOklchString(color)
+    const formatOptions = { rounded: roundColors }
+    const hslString = color ? formatColor(color, 'hsl', formatOptions) : '-'
+    const rgbString = color ? formatColor(color, 'rgb', formatOptions) : '-'
+    const hexString = color ? formatColor(color, 'hex') : '-'
+    const cmykString = color ? formatColor(color, 'cmyk', formatOptions) : '-'
+    const oklchString = color ? formatColor(color, 'oklch', formatOptions) : '-'
 
     return (
         <Card
@@ -182,7 +126,7 @@ export function ColorPanel({
             {isTransparent && (
                 <div
                     className="absolute inset-0"
-                    style={{ backgroundColor: color.toRgbaString() }}
+                    style={{ backgroundColor: rgbBackground }}
                 />
             )}
             {/* Using a wrapper to ensure content appears above the overlay */}
@@ -191,6 +135,11 @@ export function ColorPanel({
                     <div className="flex items-center gap-2">
                         <input
                         type="text"
+                        aria-label="Color value"
+                        aria-invalid={invalid}
+                        aria-describedby={invalid ? `${id}-error` : undefined}
+                        onBlur={onInputCommit}
+                        onKeyDown={event => { if (event.key === 'Enter') onInputCommit?.() }}
                         value={rawInput}
                         onChange={handleInputChange}
                         placeholder="e.g., 60 9.1% 97.8%"
@@ -198,12 +147,12 @@ export function ColorPanel({
                     />
                     <button
                         onClick={() => setShowColorPicker(!showColorPicker)}
+                        aria-label="Open color picker"
                         className={`w-8 h-8 rounded-md border border-input bg-background/80 flex items-center justify-center hover:bg-background/90 transition-colors ${textColorClass}`}
-                        style={{ backgroundColor: color ? color.toHex() : '#ffffff' }}
+                        style={{ backgroundColor: hex }}
                     >
-                        <div className="w-4 h-4 rounded-sm border border-gray-300" style={{ backgroundColor: color ? color.toHex() : '#ffffff' }} />
+                        <div className="w-4 h-4 rounded-sm border border-gray-300" style={{ backgroundColor: hex }} />
                     </button>
-                    {/* New: Revert button */}
                     {onRevert && originalInput && rawInput !== originalInput && (
                         <button
                             onClick={handleRevert}
@@ -220,7 +169,7 @@ export function ColorPanel({
                         className="absolute top-10 left-0 z-10 p-2 bg-white rounded-lg shadow-lg border border-gray-300"
                     >
                         <ColorPicker
-                            value={color ? color.toHex() : '#ffffff'}
+                            value={hex}
                             onChange={handleColorPickerChange}
                         />
                     </div>
@@ -228,57 +177,75 @@ export function ColorPanel({
             </div>
 
             <CardContent className='px-0'>
-                <div className={`space-y-1 font-mono text-xs ${textColorClass}`}>
+                {invalid && (
+                    <Alert id={`${id}-error`}>
+                        <AlertTitle>No supported color found</AlertTitle>
+                        <AlertDescription>Check the value and try again.</AlertDescription>
+                    </Alert>
+                )}
+                {!rawInput.trim() && <p className={`text-sm ${textColorClass}`}>Enter a color to see its formats.</p>}
+                {color && <div className={`space-y-1 font-mono text-xs ${textColorClass}`}>
 
-                    <h3 className='text-lg font-bold mb-2 h-10'>
-                        {parsedColor && parsedColor.cssVariable}
-                    </h3>
+                    <div className="mb-2 flex min-h-11 items-center gap-2">
+                        {parsedColor?.cssVariable && <h3 className="min-w-0 truncate text-lg font-bold">{parsedColor.cssVariable}</h3>}
+                        <Button
+                            type="button"
+                            variant={roundColors ? 'default' : 'secondary'}
+                            className="w-28"
+                            aria-label="Round color values"
+                            aria-pressed={roundColors}
+                            title="Round displayed and copied values. This preference is saved for all bands."
+                            onClick={onRoundingToggle}
+                        >
+                            {roundColors ? 'Rounded' : 'Precise'}
+                        </Button>
+                    </div>
                     <div>
                         {isTransparent ? 'HSLA' : 'HSL'}:{' '}
-                        <span
+                        <button type="button"
                             onClick={() => handleCopy(hslString, isTransparent ? 'HSLA' : 'HSL')}
                             className="inline-block cursor-pointer p-1 rounded bg-black/10 hover:bg-black/30 transition-colors"
                         >
                             {hslString}
-                        </span>
+                        </button>
                     </div>
                     <div>
                         {isTransparent ? 'RGBA' : 'RGB'}:{' '}
-                        <span
+                        <button type="button"
                             onClick={() => handleCopy(rgbString, isTransparent ? 'RGBA' : 'RGB')}
                             className="inline-block cursor-pointer p-1 rounded bg-black/10 hover:bg-black/30 transition-colors"
                         >
                             {rgbString}
-                        </span>
+                        </button>
                     </div>
                     <div>
                         Hex:{' '}
-                        <span
+                        <button type="button"
                             onClick={() => handleCopy(hexString, 'Hex')}
                             className="inline-block cursor-pointer p-1 rounded bg-black/10 hover:bg-black/30 transition-colors"
                         >
                             {hexString}
-                        </span>
+                        </button>
                     </div>
                     {showMore && color && (
                         <>
                             <div>
                                 CMYK:{' '}
-                                <span
+                                <button type="button"
                                     onClick={() => handleCopy(cmykString, 'CMYK')}
                                     className="inline-block cursor-pointer p-1 rounded bg-black/10 hover:bg-black/30 transition-colors"
                                 >
                                     {cmykString}
-                                </span>
+                                </button>
                             </div>
                             <div>
                                 OKLCH:{' '}
-                                <span
+                                <button type="button"
                                     onClick={() => handleCopy(oklchString, 'OKLCH')}
                                     className="inline-block cursor-pointer p-1 rounded bg-black/10 hover:bg-black/30 transition-colors"
                                 >
                                     {oklchString}
-                                </span>
+                                </button>
                             </div>
                         </>
                     )}
@@ -317,10 +284,9 @@ export function ColorPanel({
                             ))}
                         </div>
                     )}
-                </div>
+                </div>}
             </CardContent>
         </div>
         </Card>
     )
 }
-

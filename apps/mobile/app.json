@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Color Studio",
+    "slug": "color-lab-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": ["ios"],
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.colorlab.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "plugins": [
+      ["expo-image-picker", {
+        "photosPermission": "Choose a photo to sample its colors on your device.",
+        "cameraPermission": "Take a photo to pick and convert its colors on your device.",
+        "microphonePermission": false
+      }]
+    ]
+  }
+}

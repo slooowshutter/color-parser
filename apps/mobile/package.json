@@ -1,0 +1,32 @@
+{
+  "name": "color-lab-mobile",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@shopify/react-native-skia": "2.6.2",
+    "expo": "~57.0.23",
+    "expo-clipboard": "~57.0.2",
+    "expo-dev-client": "~57.0.19",
+    "expo-image-picker": "~57.0.18",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-worklets": "0.10.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "expo run:ios",
+    "ios:device": "expo run:ios --device",
+    "typecheck": "tsc --noEmit",
+    "test:native": "sh scripts/test-native.sh",
+    "check": "expo install --check",
+    "bundle:ios": "expo export --platform ios"
+  },
+  "private": true
+}
