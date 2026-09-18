@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <defs>
+    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#ede7dc"/><stop offset="1" stop-color="#d3c8b9"/></linearGradient>
+    <linearGradient id="orange" x2=".8" y2="1"><stop stop-color="#ffc680"/><stop offset="1" stop-color="#ef743d"/></linearGradient>
+    <linearGradient id="pink" x2="1" y2="1"><stop stop-color="#f7aaa8"/><stop offset="1" stop-color="#c96780"/></linearGradient>
+    <linearGradient id="blue" x2="1" y2="1"><stop stop-color="#637fa6"/><stop offset="1" stop-color="#253f67"/></linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%"><feDropShadow dx="16" dy="26" stdDeviation="20" flood-color="#352c25" flood-opacity=".2"/></filter>
+  </defs>
+  <path fill="url(#paper)" d="M0 0h1200v900H0z"/>
+  <g filter="url(#shadow)">
+    <path fill="#7e8d61" d="M-90 630 245 10 656 242 319 869z"/>
+    <path fill="url(#blue)" d="m720-65 480 192-264 688-480-192z"/>
+    <circle cx="427" cy="403" r="235" fill="url(#orange)"/>
+    <path fill="url(#pink)" d="M666 449h394v370H666z" transform="rotate(14 863 634)"/>
+    <path fill="#f4eddf" d="M305 749c0-111 90-201 201-201s201 90 201 201v151H305z"/>
+    <circle cx="795" cy="310" r="98" fill="#b8a4c6"/>
+  </g>
+</svg>

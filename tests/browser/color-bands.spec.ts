@@ -1,0 +1,50 @@
+import { test, expect } from '@playwright/test'
+
+test('opens directly into full-height side-by-side bands from the clipboard', async ({ page, context, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Chromium provides controllable clipboard permission for this startup check.')
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.goto('/test')
+  await page.evaluate(() => navigator.clipboard.writeText('#ff0000 rgb(0 255 0) hsl(240 100% 50%)'))
+  await page.goto('/')
+  const bands = page.getByTestId('color-band')
+  await expect(bands).toHaveCount(3)
+  await expect(page.getByRole('heading', { name: /Good colors are/ })).toHaveCount(0)
+  const bounds = await bands.evaluateAll(elements => elements.map(element => {
+    const bounds = element.getBoundingClientRect()
+    return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+  }))
+  expect(bounds[1].x).toBeGreaterThan(bounds[0].x)
+  expect(bounds[2].x).toBeGreaterThan(bounds[1].x)
+  expect(bounds.every(band => band.y === 0 && band.height >= (page.viewportSize()?.height ?? 0))).toBe(true)
+  await expect(bands.nth(0).locator('input[type="text"]')).toHaveValue('#ff0000')
+  await expect(bands.nth(1).locator('input[type="text"]')).toHaveValue('rgb(0 255 0)')
+  await expect(bands.nth(2).locator('input[type="text"]')).toHaveValue('hsl(240 100% 50%)')
+  await expect(bands.nth(0).locator('[data-slot="card"]')).toHaveCSS('background-color', 'rgb(255, 0, 0)')
+  await page.screenshot({ path: `.context/restored-color-bands-${test.info().project.name}.png`, fullPage: true })
+  await bands.nth(0).getByRole('textbox', { name: 'Color value', exact: true }).fill('#ffffff #000000')
+  await expect(bands).toHaveCount(4)
+  await page.getByRole('button', { name: 'Reset to single panel' }).click()
+  await expect(bands).toHaveCount(1)
+  await bands.getByRole('textbox', { name: 'Color value', exact: true }).fill('rgb(255 0 0 / 0)')
+  await page.getByRole('button', { name: 'Export Colors', exact: true }).click()
+  await page.getByRole('button', { name: 'Copy to Clipboard', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('[\n  "rgba(255, 0, 0, 0)"\n]')
+})
+
+
+test('clipboard denial still opens editable bands, with the photo picker separate', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText: async () => { throw new Error('Permission denied') } } })
+  })
+  await page.goto('/')
+  await expect(page.getByRole('textbox', { name: 'Color value', exact: true })).toBeVisible()
+  await expect(page.getByText('Reading from clipboard...')).toHaveCount(0)
+  await page.getByRole('textbox', { name: 'Color value', exact: true }).fill('oklch(72% 0.09 310) #abc')
+  await expect(page.getByTestId('color-band')).toHaveCount(2)
+  await expect(page.locator('.photo-stage')).toHaveCount(0)
+  await page.getByRole('link', { name: 'Photo picker', exact: true }).click()
+  await expect(page).toHaveURL(/\/photo$/)
+  await expect(page.locator('.photo-stage')).toBeVisible()
+  await page.getByRole('link', { name: '← Color bands' }).click()
+  await expect(page.getByRole('textbox', { name: 'Color value', exact: true })).toBeVisible()
+})

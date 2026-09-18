@@ -1,252 +1,148 @@
-import { Token, TokenType } from "./types"
-import { v4 as uuidv4 } from 'uuid'
+import { COLOR_FUNCTIONS } from './patterns'
+import { NAMED_COLOR_HEX } from './named-colors'
+import { parseColorValue, parseCustomPropertyValue } from './parser'
+import type { Token, TokenType } from './types'
 
+const isIdentifier = (char: string | undefined) => char !== undefined && /[\w\-\\\u0080-\uffff]/.test(char)
+const gradients = new Set(['linear-gradient', 'radial-gradient', 'conic-gradient', 'repeating-linear-gradient', 'repeating-radial-gradient', 'repeating-conic-gradient'])
 
-// Color regex patterns
-const HEX_PATTERN = /#?([0-9a-fA-F]{3,8})\b/g
-const RGB_PATTERN = /rgba?\(\s*([^)]+)\s*\)/gi
-const HSL_PATTERN = /hsla?\(\s*([^)]+)\s*\)/gi
-const CMYK_PATTERN = /cmyk\(\s*([^)]+)\s*\)/gi
-const OKLCH_PATTERN = /oklch\(\s*([^)]+)\s*\)/gi
-const CSS_VAR_PATTERN = /--[\w-]+\s*:\s*((?:\d+(?:\.\d+)?%?\s*){2,4}(?=\s+[a-z#]|[;}\n]|$))/g
+function commentEnd(text: string, position: number): number {
+    const end = text.indexOf('*/', position + 2)
+    return end === -1 ? text.length : end + 2
+}
 
+function quotedEnd(text: string, position: number): number {
+    const quote = text[position]
+    for (let index = position + 1; index < text.length; index++) {
+        if (text[index] === '\\') index++
+        else if (text[index] === quote) return index + 1
+    }
+    return text.length
+}
 
+function functionSpans(text: string): Map<number, number> {
+    const ends = new Map<number, number>()
+    const stack: number[] = []
+    for (let index = 0; index < text.length; index++) {
+        if (text.startsWith('/*', index)) index = commentEnd(text, index) - 1
+        else if (text[index] === '"' || text[index] === "'") {
+            const end = quotedEnd(text, index)
+            const quotedStack: number[] = []
+            // JSON palettes can contain color functions inside strings; their parentheses do not close an enclosing url()
+            for (let inner = index + 1; inner < end - 1; inner++) {
+                if (text[inner] === '\\') inner++
+                else if (text[inner] === '(') quotedStack.push(inner)
+                else if (text[inner] === ')') {
+                    const start = quotedStack.pop()
+                    if (start !== undefined) ends.set(start, inner + 1)
+                }
+            }
+            index = end - 1
+        }
+        else if (text[index] === '(') stack.push(index)
+        else if (text[index] === ')') {
+            const start = stack.pop()
+            if (start !== undefined) ends.set(start, index + 1)
+        }
+    }
+    return ends
+}
 
+function declarationEnd(text: string, position: number, spans: Map<number, number>): number {
+    for (let index = position; index < text.length; index++) {
+        if (text.startsWith('/*', index)) index = commentEnd(text, index) - 1
+        else if (text[index] === '"' || text[index] === "'") index = quotedEnd(text, index) - 1
+        else if (text[index] === '(' && spans.has(index)) index = spans.get(index)! - 1
+        else if (text[index] === ';' || text[index] === '}') return index
+    }
+    return text.length
+}
+
+/** A bounded scanner — balanced functions are consumed once, so invalid interiors cannot leak tokens. */
 export class ColorTokenizer {
-    private text: string
-    private tokens: Token[] = []
+    private readonly tokens: Token[]
 
-    constructor(text: string) {
-        this.text = text
-        this.tokens = this.tokenize()
-        this.addLineInfo()
+    constructor(private readonly text: string) {
+        this.tokens = this.scan()
     }
 
-    /**
-     * Tokenize the entire text and extract all color tokens
-     */
-    private tokenize(): Token[] {
+    private scan(): Token[] {
         const tokens: Token[] = []
-
-        // Extract CSS custom properties first (they have priority)
-        this.extractCssVariables(tokens)
-
-        // Extract hex colors
-        this.extractHexColors(tokens)
-
-        // Extract rgb/rgba colors
-        this.extractRgbColors(tokens)
-
-        // Extract hsl/hsla colors
-        this.extractHslColors(tokens)
-
-        // Extract cmyk colors
-        this.extractCmykColors(tokens)
-
-        // Extract oklch colors
-        this.extractOklchColors(tokens)
-
-        // Sort tokens by position and remove overlaps
-        tokens.sort((a, b) => a.startPosition - b.startPosition)
-
-        return this.removeOverlaps(tokens)
-    }
-
-    /**
-     * Extract CSS custom properties like --primary: 20 14.3% 4.1%
-     */
-    private extractCssVariables(tokens: Token[]): void {
-        CSS_VAR_PATTERN.lastIndex = 0
-        let match
-
-        while ((match = CSS_VAR_PATTERN.exec(this.text)) !== null) {
-            const value = match[1].trim()
-
-            // Check if the value looks like a color (unwrapped HSL, RGB, etc.)
-            if (this.isLikelyColorValue(value)) {
-                tokens.push({
-                    id: uuidv4(),
-                    type: 'css-variable',
-                    raw: match[0],
-                    startPosition: match.index,
-                    endPosition: match.index + match[0].length,
-                    line: 0 // Will be set later
-                })
+        const spans = functionSpans(this.text)
+        const lineStarts = [0]
+        for (let index = 0; index < this.text.length; index++) {
+            if (this.text[index] === '\n') lineStarts.push(index + 1)
+            else if (this.text[index] === '\r' && this.text[index + 1] !== '\n') lineStarts.push(index + 1)
+        }
+        const add = (start: number, end: number, type: TokenType, cssVariable?: string) => {
+            let low = 0, high = lineStarts.length
+            while (low + 1 < high) {
+                const middle = Math.floor((low + high) / 2)
+                if (lineStarts[middle] <= start) low = middle
+                else high = middle
+            }
+            tokens.push({ id: `${start}:${end}:${type}`, type, raw: this.text.slice(start, end), startPosition: start,
+                endPosition: end, line: low + 1, column: start - lineStarts[low] + 1, ...(cssVariable ? { cssVariable } : {}) })
+        }
+        let index = 0
+        while (index < this.text.length) {
+            if (this.text.startsWith('/*', index)) { index = commentEnd(this.text, index); continue }
+            const start = index
+            if (this.text[index] === '#') {
+                index++
+                while (isIdentifier(this.text[index])) index++
+                const raw = this.text.slice(start, index)
+                if (!isIdentifier(this.text[start - 1]) && this.text[start - 1] !== '#' && parseColorValue(raw)) {
+                    add(start, index, 'hex')
+                }
+                continue
+            }
+            if (!isIdentifier(this.text[index])) { index++; continue }
+            while (isIdentifier(this.text[index])) index++
+            const word = this.text.slice(start, index)
+            const name = word.toLowerCase()
+            let next = index
+            while (/\s/.test(this.text[next] ?? '') && next < this.text.length) next++
+            if (word.startsWith('--') && word.length > 2 && this.text[next] === ':') {
+                const end = declarationEnd(this.text, next + 1, spans)
+                const value = this.text.slice(next + 1, end)
+                const parsed = parseCustomPropertyValue(value)
+                if (parsed) {
+                    add(start, end - (value.length - value.trimEnd().length), 'css-variable')
+                    index = end
+                    continue
+                }
+                index = end
+                continue
+            }
+            if (this.text[index] === '(') {
+                const closedEnd = spans.get(index)
+                const span = { end: closedEnd ?? declarationEnd(this.text, index + 1, spans), closed: closedEnd !== undefined }
+                // Gradients are containers, while expressions such as var()/color-mix() need a resolver
+                if (span.closed && gradients.has(name)) { index++; continue }
+                if (span.closed && Object.hasOwn(COLOR_FUNCTIONS, name) && parseColorValue(this.text.slice(start, span.end))) {
+                    add(start, span.end, COLOR_FUNCTIONS[name as keyof typeof COLOR_FUNCTIONS])
+                }
+                index = span.end
+                continue
+            }
+            if (name === 'transparent' || Object.hasOwn(NAMED_COLOR_HEX, name)) {
+                // A named property or JSON key is not itself its value
+                let afterKey = next
+                if (this.text[afterKey] === '"' || this.text[afterKey] === "'") {
+                    afterKey++
+                    while (afterKey < this.text.length && /\s/.test(this.text[afterKey])) afterKey++
+                }
+                if (this.text[afterKey] !== ':' && this.text[next] !== '(' && this.text[start - 1] !== '#') {
+                    add(start, index, 'named')
+                }
             }
         }
+        return tokens
     }
 
-    /**
-     * Check if a value looks like a color value for CSS custom properties
-     */
-    private isLikelyColorValue(value: string): boolean {
-        const trimmed = value.trim()
-
-        // Check for unwrapped HSL/RGB values (numbers with optional %)
-        const unwrappedPattern = /^\s*((?:\d+(?:\.\d+)?%?\s*){2,4})\s*$/
-        if (unwrappedPattern.test(trimmed)) {
-            return true
-        }
-
-        // Check for known color functions or hex values
-        return /^(#[0-9a-fA-F]{3,8}|rgb|hsl|oklch|lab|lch|hwb|cmyk|color\()/i.test(trimmed)
-    }
-
-    /**
-     * Extract hex colors
-     */
-    private extractHexColors(tokens: Token[]): void {
-        HEX_PATTERN.lastIndex = 0
-        let match
-
-        while ((match = HEX_PATTERN.exec(this.text)) !== null) {
-            tokens.push({
-                id: uuidv4(),
-                type: 'hex',
-                raw: match[0],
-                startPosition: match.index,
-                endPosition: match.index + match[0].length,
-                line: 0 // Will be set later
-            })
-        }
-    }
-
-    /**
-     * Extract rgb/rgba colors
-     */
-    private extractRgbColors(tokens: Token[]): void {
-        RGB_PATTERN.lastIndex = 0
-        let match
-
-        while ((match = RGB_PATTERN.exec(this.text)) !== null) {
-            tokens.push({
-                id: uuidv4(),
-                type: 'rgb',
-                raw: match[0],
-                startPosition: match.index,
-                endPosition: match.index + match[0].length,
-                line: 0 // Will be set later
-            })
-        }
-    }
-
-    /**
-     * Extract hsl/hsla colors
-     */
-    private extractHslColors(tokens: Token[]): void {
-        HSL_PATTERN.lastIndex = 0
-        let match
-
-        while ((match = HSL_PATTERN.exec(this.text)) !== null) {
-            tokens.push({
-                id: uuidv4(),
-                type: 'hsl',
-                raw: match[0],
-                startPosition: match.index,
-                endPosition: match.index + match[0].length,
-                line: 0 // Will be set later
-            })
-        }
-    }
-
-    /**
-     * Extract cmyk colors
-     */
-    private extractCmykColors(tokens: Token[]): void {
-        CMYK_PATTERN.lastIndex = 0
-        let match
-
-        while ((match = CMYK_PATTERN.exec(this.text)) !== null) {
-            tokens.push({
-                id: uuidv4(),
-                type: 'cmyk',
-                raw: match[0],
-                startPosition: match.index,
-                endPosition: match.index + match[0].length,
-                line: 0 // Will be set later
-            })
-        }
-    }
-
-    /**
-     * Extract oklch colors
-     */
-    private extractOklchColors(tokens: Token[]): void {
-        OKLCH_PATTERN.lastIndex = 0
-        let match
-
-        while ((match = OKLCH_PATTERN.exec(this.text)) !== null) {
-            tokens.push({
-                id: uuidv4(),
-                type: 'oklch',
-                raw: match[0],
-                startPosition: match.index,
-                endPosition: match.index + match[0].length,
-                line: 0 // Will be set later
-            })
-        }
-    }
-
-    /**
-     * Remove overlapping tokens, keeping the first one found
-     */
-    private removeOverlaps(tokens: Token[]): Token[] {
-        const filteredTokens: Token[] = []
-
-        for (const current of tokens) {
-            const hasOverlap = filteredTokens.some(existing => 
-                this.tokensOverlap(current, existing)
-            )
-
-            if (!hasOverlap) {
-                filteredTokens.push(current)
-            }
-        }
-
-        return filteredTokens
-    }
-
-    /**
-     * Check if two tokens overlap
-     */
-    private tokensOverlap(a: Token, b: Token): boolean {
-        return !(a.endPosition <= b.startPosition || b.endPosition <= a.startPosition)
-    }
-
-    /**
-     * Get line number for a position
-     */
-    private getLineNumber(position: number): number {
-        return this.text.slice(0, position).split('\n').length
-    }
-
-    /**
-     * Add line information to all tokens
-     */
-    private addLineInfo(): void {
-        this.tokens.forEach(token => {
-            token.line = this.getLineNumber(token.startPosition)
-        })
-    }
-
-    /**
-     * Get all parsed tokens
-     */
-    getTokens(): Token[] {
-        return [...this.tokens]
-    }
-
-    /**
-     * Get tokens by type
-     */
-    getTokensByType(type: TokenType): Token[] {
-        return this.tokens.filter(token => token.type === type)
-    }
-
-    /**
-     * Get the original text
-     */
-    getText(): string {
-        return this.text
-    }
+    /** Return fresh token objects so callers cannot mutate scanner state. */
+    getTokens(): Token[] { return this.tokens.map(token => ({ ...token })) }
+    getTokensByType(type: TokenType): Token[] { return this.getTokens().filter(token => token.type === type) }
+    getText(): string { return this.text }
 }

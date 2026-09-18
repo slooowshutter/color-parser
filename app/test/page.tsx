@@ -2,7 +2,6 @@
 
 
 import { useEffect, useState } from 'react'
-import { toast } from 'sonner'
 import { buildColorObject } from '@/lib/build-color-object'
 import { ColorObject } from '@/lib/types'
 

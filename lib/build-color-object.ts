@@ -1,43 +1,23 @@
 import { ColorTokenizer } from './tokenizer'
 import { parseToken } from './parser'
-import { convertToAllFormats } from './converter'
-import { ColorObject } from './types'
+import { colorToXyz, convertToAllFormats, xyzToUnclippedRgb } from './converter'
+import type { ColorObject } from './types'
 
-export async function buildColorObject(value: string): Promise<ColorObject[]> {
-    // Tokenize the input
-    const tokenizer = new ColorTokenizer(value)
-    const tokens = tokenizer.getTokens()
-
-    // Parse and convert each token
-    const colorObjects: ColorObject[] = []
-    
-    for (const token of tokens) {
+/** Pure synchronous engine shared by the website and native app; invalid occurrences are omitted. */
+export function parseColors(value: string): ColorObject[] {
+    const objects: ColorObject[] = []
+    for (const token of new ColorTokenizer(value).getTokens()) {
         const parsedColor = parseToken(token)
-        // console.log('parsedColor', parsedColor)
-
-        if (parsedColor) {
-            try {
-                const convertedColors = convertToAllFormats(parsedColor)
-                // console.log('convertedColors', convertedColors)
-                
-                colorObjects.push({
-                    token,
-                    parsedColor,
-                    convertedColors
-                })
-            } catch (error) {
-                console.warn(`Failed to convert color: ${token.raw}`, error)
-                // Skip this color if conversion fails
-            }
-        }
+        if (!parsedColor) continue
+        const convertedColors = convertToAllFormats(parsedColor)
+        const rawRgb = xyzToUnclippedRgb(colorToXyz(parsedColor))
+        // Extremely large finite source values can overflow conversion matrices
+        if (Object.values(convertedColors).some(color => typeof color !== 'string' && Object.values(color).some(channel => !Number.isFinite(channel)))) continue
+        const outOfGamut = Object.values(rawRgb).some(channel => channel < -1e-4 || channel > 255.0001)
+        objects.push({ token, parsedColor, convertedColors, outOfGamut })
     }
-
-    console.log('colorObjects', JSON.stringify(colorObjects, null, 2))
-
-    return colorObjects
+    return objects
 }
 
-
-
-
-
+/** Compatibility entry point for existing asynchronous callers. */
+export async function buildColorObject(value: string): Promise<ColorObject[]> { return parseColors(value) }
